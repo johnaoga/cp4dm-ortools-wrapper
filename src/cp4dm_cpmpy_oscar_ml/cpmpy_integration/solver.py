@@ -20,7 +20,10 @@ from cp4dm_cpmpy_oscar_ml.cpmpy_integration.globals import (
     ClosedFrequentItemset,
     CoverClosure,
     CoverSize,
+    FrequentEpisode,
     FrequentItemset,
+    SequentialPattern,
+    ZeroDiagonalConvexScore,
 )
 from cp4dm_cpmpy_oscar_ml.engine.domain import DomainStore, EngineVar, VarType
 from cp4dm_cpmpy_oscar_ml.engine.propagation_queue import PropagationQueue
@@ -28,7 +31,15 @@ from cp4dm_cpmpy_oscar_ml.engine.propagator import Propagator
 from cp4dm_cpmpy_oscar_ml.engine.search import DepthFirstSearch, SearchStats
 from cp4dm_cpmpy_oscar_ml.engine.trail import Trail
 from cp4dm_cpmpy_oscar_ml.exceptions import InconsistencyError, UnsupportedExpressionError
-from cp4dm_cpmpy_oscar_ml.pattern_mining.fim.propagators import ClosedFIMPropagator, FIMPropagator
+from cp4dm_cpmpy_oscar_ml.pattern_mining.fim.propagators import (
+    ClosedFIMPropagator,
+    CoverClosurePropagator,
+    CoverSizePropagator,
+    FIMPropagator,
+    ZDCPropagator,
+)
+from cp4dm_cpmpy_oscar_ml.pattern_mining.spm.propagators import PPICPropagator
+from cp4dm_cpmpy_oscar_ml.pattern_mining.fem.propagators import EpisodeSupportPropagator
 
 
 class CPM_oscar_ml:
@@ -171,6 +182,12 @@ class CPM_oscar_ml:
             self._post_cover_size(constraint)
         elif isinstance(constraint, CoverClosure):
             self._post_cover_closure(constraint)
+        elif isinstance(constraint, ZeroDiagonalConvexScore):
+            self._post_zdc(constraint)
+        elif isinstance(constraint, SequentialPattern):
+            self._post_sequential_pattern(constraint)
+        elif isinstance(constraint, FrequentEpisode):
+            self._post_frequent_episode(constraint)
         elif isinstance(constraint, GlobalConstraint):
             if constraint.name in self.supported_global_constraints:
                 raise UnsupportedExpressionError(
@@ -206,12 +223,39 @@ class CPM_oscar_ml:
         self._prop_queue.add_propagator(prop)
 
     def _post_cover_size(self, constraint: CoverSize) -> None:
-        """Post CoverSize propagator (TODO: implement CoverSizePropagator)."""
-        raise UnsupportedExpressionError("CoverSize propagator not yet implemented")
+        """Post CoverSize propagator."""
+        engine_vars = [self._get_or_create_engine_var(v) for v in constraint.item_vars]
+        sup_var = self._get_or_create_engine_var(constraint.support_var)
+        prop = CoverSizePropagator(engine_vars, sup_var, constraint.data)
+        self._prop_queue.add_propagator(prop)
 
     def _post_cover_closure(self, constraint: CoverClosure) -> None:
-        """Post CoverClosure propagator (TODO: implement)."""
-        raise UnsupportedExpressionError("CoverClosure propagator not yet implemented")
+        """Post CoverClosure propagator."""
+        engine_vars = [self._get_or_create_engine_var(v) for v in constraint.item_vars]
+        sup_var = self._get_or_create_engine_var(constraint.support_var)
+        prop = CoverClosurePropagator(engine_vars, sup_var, constraint.data)
+        self._prop_queue.add_propagator(prop)
+
+    def _post_zdc(self, constraint: ZeroDiagonalConvexScore) -> None:
+        """Post ZDC propagator."""
+        pos_var = self._get_or_create_engine_var(constraint.pos_var)
+        neg_var = self._get_or_create_engine_var(constraint.neg_var)
+        score_var = self._get_or_create_engine_var(constraint.score_var)
+        prop = ZDCPropagator(pos_var, neg_var, score_var,
+                             constraint.n_pos, constraint.n_neg, constraint.score_fn)
+        self._prop_queue.add_propagator(prop)
+
+    def _post_sequential_pattern(self, constraint: SequentialPattern) -> None:
+        """Post PPIC propagator."""
+        pattern_vars = [self._get_or_create_engine_var(v) for v in constraint.pattern_vars]
+        prop = PPICPropagator(pattern_vars, constraint.minsup, constraint.data)
+        self._prop_queue.add_propagator(prop)
+
+    def _post_frequent_episode(self, constraint: FrequentEpisode) -> None:
+        """Post EpisodeSupport propagator."""
+        pattern_vars = [self._get_or_create_engine_var(v) for v in constraint.pattern_vars]
+        prop = EpisodeSupportPropagator(pattern_vars, constraint.minsup, constraint.data)
+        self._prop_queue.add_propagator(prop)
 
     def _post_comparison(self, comp: Comparison) -> None:
         """Handle simple comparisons like sum(vars) <= k."""

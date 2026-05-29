@@ -186,3 +186,7 @@ class DomainStore:
         """Restore a variable's domain from a snapshot."""
         var.lb, var.ub = snap[0], snap[1]
         var.removed = set(snap[2])
+
+    def domain_values(self, var: EngineVar) -> list[int]:
+        """Return all values currently in the domain of var."""
+        return [v for v in range(var.lb, var.ub + 1) if v not in var.removed]
