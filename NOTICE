@@ -1,0 +1,15 @@
+This software contains code derived from the Oscar project.
+
+Oscar - Scala Constraint Programming Library
+Copyright (c) Oscar contributors
+Website: https://bitbucket.org/oscarlib/oscar/wiki/Home
+License: LGPL-2.1-or-later
+
+The pattern mining and classification tree constraint propagators in this package
+are ports of the oscar-ml module, originally authored by:
+  - John Aoga (johnaoga@gmail.com)
+  - Pierre Schaus
+
+The ported code preserves the algorithmic logic and data structures from the
+original Scala implementation while adapting them to Python and the CPMpy
+constraint modeling framework.

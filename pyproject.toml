@@ -1,0 +1,46 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "cp4dm-cpmpy-oscar-ml"
+version = "0.1.0"
+description = "Oscar ML constraint propagation for pattern mining and classification trees, integrated with CPMpy"
+readme = "README.md"
+license = "LGPL-2.1-or-later"
+requires-python = ">=3.10"
+authors = [
+    { name = "John Aoga", email = "johnaoga@gmail.com" },
+]
+dependencies = [
+    "cpmpy>=0.9",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+    "ruff>=0.1",
+    "mypy>=1.0",
+]
+viz = [
+    "numpy>=1.24",
+    "pandas>=2.0",
+    "graphviz>=0.20",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/cp4dm_cpmpy_oscar_ml"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
