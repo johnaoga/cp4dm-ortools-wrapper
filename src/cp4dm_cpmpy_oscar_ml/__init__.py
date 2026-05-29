@@ -17,9 +17,14 @@ from cp4dm_cpmpy_oscar_ml.cpmpy_integration.globals import (
     ClosedFrequentItemset,
     CoverClosure,
     CoverSize,
+    DummyEndNode,
+    DummyNode,
     FrequentEpisode,
     FrequentItemset,
     SequentialPattern,
+    SplitPossible,
+    SplitUseful,
+    TreeCoverSizeSR,
     ZeroDiagonalConvexScore,
 )
 from cp4dm_cpmpy_oscar_ml.cpmpy_integration.solver import CPM_oscar_ml
@@ -47,4 +52,9 @@ __all__ = [
     "SequentialPatternSolver",
     "FEMConfig",
     "FrequentEpisodeSolver",
+    "TreeCoverSizeSR",
+    "SplitPossible",
+    "SplitUseful",
+    "DummyNode",
+    "DummyEndNode",
 ]

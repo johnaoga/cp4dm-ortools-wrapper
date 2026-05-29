@@ -9,7 +9,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Sequence
 
-import cpmpy as cp
 from cpmpy.expressions.globalconstraints import GlobalConstraint
 
 from cp4dm_cpmpy_oscar_ml.exceptions import NotSupportedError
@@ -196,7 +195,7 @@ class TreeCoverSizeSR(GlobalConstraint):
     """
 
     def __init__(self, take_vars: Sequence, reject_vars: Sequence,
-                 support_var: Any, data: "ClassificationDataset") -> None:
+                 support_var: Any, data: "PatternDataset") -> None:
         self.take_vars = tuple(take_vars)
         self.reject_vars = tuple(reject_vars)
         self.support_var = support_var
@@ -239,7 +238,7 @@ class SplitUseful(GlobalConstraint):
     """Oscar ML SplitUseful classification tree constraint."""
 
     def __init__(self, decision: Any, mini_sum: Any, count_pos: Any,
-                 count_neg: Any, error_upper_bound: float) -> None:
+                 count_neg: Any, error_upper_bound: int) -> None:
         self.decision = decision
         self.mini_sum = mini_sum
         self.count_pos = count_pos
@@ -255,3 +254,43 @@ class SplitUseful(GlobalConstraint):
 
     def __repr__(self) -> str:
         return f"SplitUseful(error_ub={self.error_upper_bound})"
+
+
+class DummyNode(GlobalConstraint):
+    """Oscar ML CstDummy: links parent decision to child decisions/sums."""
+
+    def __init__(self, decision_parent: Any, decision_child_left: Any,
+                 decision_child_right: Any, sum_child_left: Any,
+                 sum_child_right: Any) -> None:
+        self.decision_parent = decision_parent
+        self.decision_child_left = decision_child_left
+        self.decision_child_right = decision_child_right
+        self.sum_child_left = sum_child_left
+        self.sum_child_right = sum_child_right
+        super().__init__("oscar_dummy_node",
+                         [decision_parent, decision_child_left, decision_child_right,
+                          sum_child_left, sum_child_right])
+
+    def decompose(self) -> Any:
+        raise NotSupportedError("DummyNode is an Oscar ML native global. Use CPM_oscar_ml.")
+
+    def __repr__(self) -> str:
+        return "DummyNode()"
+
+
+class DummyEndNode(GlobalConstraint):
+    """Oscar ML CstDummyEnd: leaf-level node link."""
+
+    def __init__(self, decision_parent: Any, sum_child_left: Any,
+                 sum_child_right: Any) -> None:
+        self.decision_parent = decision_parent
+        self.sum_child_left = sum_child_left
+        self.sum_child_right = sum_child_right
+        super().__init__("oscar_dummy_end_node",
+                         [decision_parent, sum_child_left, sum_child_right])
+
+    def decompose(self) -> Any:
+        raise NotSupportedError("DummyEndNode is an Oscar ML native global. Use CPM_oscar_ml.")
+
+    def __repr__(self) -> str:
+        return "DummyEndNode()"

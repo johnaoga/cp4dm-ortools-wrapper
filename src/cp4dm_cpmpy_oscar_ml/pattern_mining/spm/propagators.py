@@ -113,14 +113,16 @@ class PPICPropagator(Propagator):
         self._last_pos_map = _get_item_last_pos_by_sequence(sdb, self._n_items)
         self._last_pos_list = _get_sdb_last_pos(sdb, self._last_pos_map)
 
-        # Initial support: index 0 = epsilon (all sequences)
+        # Initial support per item (index = item id, 0 = epsilon = all sequences)
         raw_support = _get_sdb_support(sdb, self._n_items)
-        self._items_support: list[int] = [self._len_sdb] + raw_support[1:]
+        # raw_support[0] is epsilon (always 0 from helper); override to len_sdb
+        raw_support[0] = self._len_sdb
+        self._items_support: list[int] = raw_support
 
-        # Pseudo-projected database as a flat trail
-        # psdb_seq_id[i], psdb_pos[i] encode (sid, pos_after_prefix)
-        trail_size = self._len_sdb * 5
-        self._psdb_seq_id: list[int] = list(range(trail_size))
+        # Pseudo-projected database as a flat trail of (sid, start_pos) pairs.
+        # Initial window: sid[i] = i, pos[i] = -1 (meaning: scan full sequence)
+        trail_size = max(self._len_sdb * 10, 64)
+        self._psdb_seq_id: list[int] = list(range(self._len_sdb)) + [0] * (trail_size - self._len_sdb)
         self._psdb_pos: list[int] = [-1] * trail_size
         self._trail_size = trail_size
 
@@ -135,6 +137,9 @@ class PPICPropagator(Propagator):
         self._cur_pos: int = 0
 
     def setup(self, store: DomainStore, trail: Trail) -> None:
+        # Prune position 0 based on initial item supports (may raise InconsistencyError)
+        if self.pattern_vars:
+            self._prune(0, store)
         self._do_propagate(store, trail)
         for var in self.pattern_vars:
             self.watch_bind(var)
@@ -197,69 +202,84 @@ class PPICPropagator(Propagator):
         return True
 
     def _project_sdb(self, prefix: int) -> int:
-        """Compute next pseudo-projected database, update support counters."""
+        """
+        Project the current pseudo-projected database on prefix.
+
+        For each (sid, pos) entry in the current window, find the first
+        occurrence of prefix at or after pos. If found, record the
+        projected (sid, pos_after_prefix) and accumulate support counts
+        for items that still appear after that position.
+        """
         start_init = self._psdb_start
         size_init = self._psdb_size
-        self._support_counter = [0] * self._n_items
-        cur_prefix_support = 0
-        nb_added_target = self._items_support[prefix] if prefix < len(self._items_support) else 0
-
-        i = start_init
-        j = start_init + size_init
-        nb_added = 0
+        new_support = [0] * self._n_items
+        cur_sup = 0
 
         # Grow trail if needed
-        while j + size_init >= self._trail_size:
+        needed = start_init + size_init + size_init + 10
+        while needed >= self._trail_size:
             self._psdb_seq_id = self._psdb_seq_id + [0] * self._trail_size
             self._psdb_pos = self._psdb_pos + [-1] * self._trail_size
             self._trail_size *= 2
 
-        while i < start_init + size_init and nb_added < nb_added_target:
+        j = start_init + size_init
+
+        for i in range(start_init, start_init + size_init):
             sid = self._psdb_seq_id[i]
             seq = self._sdb[sid]
-            lti = len(seq)
-            start = self._psdb_pos[i]
-            pos = start
+            start_pos = self._psdb_pos[i]
 
-            last_pos_prefix = self._last_pos_map[sid][prefix] if prefix < len(self._last_pos_map[sid]) else 0
-            if last_pos_prefix != 0 and last_pos_prefix - 1 >= pos:
-                nb_added += 1
-                # Find next occurrence of prefix
-                if start == -1:
-                    pos = (self._first_pos_map[sid][prefix] - 1) if prefix < len(self._first_pos_map[sid]) else 0
-                else:
-                    while pos < lti and seq[pos] != prefix:
-                        pos += 1
+            # Find first occurrence of prefix at index >= start_pos
+            found = -1
+            if start_pos == -1:
+                # Full sequence scan (initial state)
+                for k, item in enumerate(seq):
+                    if item == prefix:
+                        found = k
+                        break
+            else:
+                for k in range(start_pos, len(seq)):
+                    if seq[k] == prefix:
+                        found = k
+                        break
 
-                self._psdb_seq_id[j] = sid
-                self._psdb_pos[j] = pos + 1
-                j += 1
-                cur_prefix_support += 1
+            if found == -1:
+                continue  # prefix not in this sequence after start_pos
 
-                # Recompute support from last-position list
-                ti_last = self._last_pos_list[sid]
-                c = 0
-                while c < len(ti_last) and ti_last[c] - 1 > pos:
-                    item_at = seq[ti_last[c] - 1]
-                    if item_at < self._n_items:
-                        self._support_counter[item_at] += 1
-                    c += 1
-            i += 1
+            # Projected position: first index after the found prefix
+            proj_pos = found + 1
+            self._psdb_seq_id[j] = sid
+            self._psdb_pos[j] = proj_pos
+            j += 1
+            cur_sup += 1
+
+            # Count items that still appear at or after proj_pos
+            seen_after: set[int] = set()
+            for k in range(proj_pos, len(seq)):
+                item = seq[k]
+                if item < self._n_items and item not in seen_after:
+                    new_support[item] += 1
+                    seen_after.add(item)
 
         self._psdb_start = start_init + size_init
-        self._psdb_size = cur_prefix_support
-        self._items_support = self._support_counter[:]
-        # Restore epsilon support
-        self._items_support[0] = cur_prefix_support
-        return cur_prefix_support
+        self._psdb_size = cur_sup
+        self._support_counter = new_support
+        self._items_support = new_support[:]
+        self._items_support[0] = cur_sup  # epsilon support = current projected size
+        return cur_sup
 
     def _prune(self, i: int, store: DomainStore) -> None:
         """Remove infrequent items from domain of pattern_vars[i]."""
         if i >= self._len_pattern:
             return
         var = self.pattern_vars[i]
-        # Collect current domain values
         domain = list(store.domain_values(var))
         for item in domain:
             if item != self._epsilon and (item >= self._n_items or self._support_counter[item] < self.minsup):
                 store.remove_value(var, item)
+        if i == 0:
+            remaining = store.domain_values(var)
+            if all(v == self._epsilon for v in remaining):
+                raise InconsistencyError(
+                    f"PPIC: no item meets minsup={self.minsup} at position {i}"
+                )

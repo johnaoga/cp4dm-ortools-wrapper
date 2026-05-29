@@ -82,6 +82,9 @@ class EpisodeSupportPropagator(Propagator):
     def setup(self, store: DomainStore, trail: Trail) -> None:
         # Recompute proper initial support
         self._recompute_support_from_all_positions()
+        # Prune position 0 based on initial support (may raise InconsistencyError)
+        if self.pattern_vars:
+            self._prune(0, store)
         self._do_propagate(store, trail)
         for var in self.pattern_vars:
             self.watch_bind(var)
@@ -90,13 +93,11 @@ class EpisodeSupportPropagator(Propagator):
         self._do_propagate(store, trail)
 
     def _recompute_support_from_all_positions(self) -> None:
-        """Compute initial item support counts over the full long sequence."""
+        """Compute initial item occurrence counts in the long sequence."""
         self._support_counter = [0] * (self._n_items + 1)
-        seen: set[int] = set()
         for item in self._ls:
-            if item not in seen and item < self._n_items:
+            if item < self._n_items:
                 self._support_counter[item] += 1
-                seen.add(item)
 
     def _do_propagate(self, store: DomainStore, trail: Trail) -> None:
         saved_start = self._psdb_start
@@ -220,3 +221,11 @@ class EpisodeSupportPropagator(Propagator):
         for item in domain:
             if item != self._epsilon and (item >= self._n_items or self._support_counter[item] < self.minsup):
                 store.remove_value(var, item)
+        # After pruning, if only epsilon remains at position 0, the pattern cannot
+        # start with any real item — fail if this is the root position.
+        if i == 0:
+            remaining = store.domain_values(var)
+            if all(v == self._epsilon for v in remaining):
+                raise InconsistencyError(
+                    f"EpisodeSupport: no item meets minsup={self.minsup} at position {i}"
+                )

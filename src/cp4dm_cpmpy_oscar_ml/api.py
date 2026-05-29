@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
-from typing import Callable, Sequence
 
 import cpmpy as cp
 
@@ -172,11 +171,16 @@ class SequentialPatternSolver:
         t0 = time.perf_counter()
 
         def _on_solution():
-            seq = tuple(v.value() for v in P if v.value() != 0)
+            vals = [v.value() for v in P]
+            seq = []
+            for v in vals:
+                if v == 0:
+                    break
+                seq.append(v)
             if seq:
-                sup = self._compute_sequence_support(seq, data)
+                sup = self._compute_sequence_support(tuple(seq), data)
                 if sup >= self.config.minsup:
-                    patterns.append(Pattern(items=seq, support=sup))
+                    patterns.append(Pattern(items=tuple(seq), support=sup))
 
         self._solver.solveAll(display=_on_solution)
         result.patterns = patterns
@@ -242,9 +246,14 @@ class FrequentEpisodeSolver:
         t0 = time.perf_counter()
 
         def _on_solution():
-            ep = tuple(v.value() for v in E if v.value() != 0)
+            vals = [v.value() for v in E]
+            ep = []
+            for v in vals:
+                if v == 0:
+                    break
+                ep.append(v)
             if ep:
-                patterns.append(Pattern(items=ep, support=self.config.minsup))
+                patterns.append(Pattern(items=tuple(ep), support=self.config.minsup))
 
         self._solver.solveAll(display=_on_solution)
         result.patterns = patterns

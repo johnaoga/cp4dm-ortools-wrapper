@@ -8,21 +8,26 @@ natively (without decomposition), and populates CPMpy variable values.
 
 from __future__ import annotations
 
-from typing import Any, Callable, Sequence
+from typing import Any, Callable
 
 import cpmpy as cp
 from cpmpy.expressions.core import BoolVal, Comparison, Operator
 from cpmpy.expressions.globalconstraints import GlobalConstraint
-from cpmpy.expressions.variables import NDVarArray, _BoolVarImpl, _IntVarImpl, boolvar, cpm_array, intvar
+from cpmpy.expressions.variables import _BoolVarImpl, _IntVarImpl
 from cpmpy.transformations.get_variables import get_variables as cpmpy_get_variables
 
 from cp4dm_cpmpy_oscar_ml.cpmpy_integration.globals import (
     ClosedFrequentItemset,
     CoverClosure,
     CoverSize,
+    DummyEndNode,
+    DummyNode,
     FrequentEpisode,
     FrequentItemset,
     SequentialPattern,
+    SplitPossible,
+    SplitUseful,
+    TreeCoverSizeSR,
     ZeroDiagonalConvexScore,
 )
 from cp4dm_cpmpy_oscar_ml.engine.domain import DomainStore, EngineVar, VarType
@@ -40,6 +45,13 @@ from cp4dm_cpmpy_oscar_ml.pattern_mining.fim.propagators import (
 )
 from cp4dm_cpmpy_oscar_ml.pattern_mining.spm.propagators import PPICPropagator
 from cp4dm_cpmpy_oscar_ml.pattern_mining.fem.propagators import EpisodeSupportPropagator
+from cp4dm_cpmpy_oscar_ml.pattern_mining.tree.propagators import (
+    CoverSizeSRPropagator,
+    CstDummyEndPropagator,
+    CstDummyPropagator,
+    CstSplitPossiblePropagator,
+    CstSplitUsefulPropagator,
+)
 
 
 class CPM_oscar_ml:
@@ -85,6 +97,7 @@ class CPM_oscar_ml:
         self._search: DepthFirstSearch | None = None
         self._stats = SearchStats()
         self._built = False
+        self._infeasible = False
 
     def solve(
         self,
@@ -93,6 +106,8 @@ class CPM_oscar_ml:
     ) -> bool:
         """Solve the model, finding one solution."""
         self._build()
+        if self._infeasible:
+            return False
         search = self._create_search()
         if time_limit > 0:
             search.set_time_limit(time_limit)
@@ -114,6 +129,8 @@ class CPM_oscar_ml:
     ) -> int:
         """Enumerate all solutions."""
         self._build()
+        if self._infeasible:
+            return 0
         search = self._create_search()
         if time_limit > 0:
             search.set_time_limit(time_limit)
@@ -148,9 +165,12 @@ class CPM_oscar_ml:
         for cv in all_vars:
             self._get_or_create_engine_var(cv)
 
-        # Translate constraints
-        for constraint in self._cpmpy_model.constraints:
-            self._post_constraint(constraint)
+        # Translate constraints; catch immediate infeasibility from setup propagation
+        try:
+            for constraint in self._cpmpy_model.constraints:
+                self._post_constraint(constraint)
+        except InconsistencyError:
+            self._infeasible = True
 
         self._built = True
 
@@ -188,6 +208,16 @@ class CPM_oscar_ml:
             self._post_sequential_pattern(constraint)
         elif isinstance(constraint, FrequentEpisode):
             self._post_frequent_episode(constraint)
+        elif isinstance(constraint, TreeCoverSizeSR):
+            self._post_tree_cover_size_sr(constraint)
+        elif isinstance(constraint, SplitPossible):
+            self._post_split_possible(constraint)
+        elif isinstance(constraint, SplitUseful):
+            self._post_split_useful(constraint)
+        elif isinstance(constraint, DummyNode):
+            self._post_dummy_node(constraint)
+        elif isinstance(constraint, DummyEndNode):
+            self._post_dummy_end_node(constraint)
         elif isinstance(constraint, GlobalConstraint):
             if constraint.name in self.supported_global_constraints:
                 raise UnsupportedExpressionError(
@@ -255,6 +285,52 @@ class CPM_oscar_ml:
         """Post EpisodeSupport propagator."""
         pattern_vars = [self._get_or_create_engine_var(v) for v in constraint.pattern_vars]
         prop = EpisodeSupportPropagator(pattern_vars, constraint.minsup, constraint.data)
+        self._prop_queue.add_propagator(prop)
+
+    def _post_tree_cover_size_sr(self, constraint: TreeCoverSizeSR) -> None:
+        """Post CoverSizeSR propagator."""
+        take_vars = [self._get_or_create_engine_var(v) for v in constraint.take_vars]
+        reject_vars = [self._get_or_create_engine_var(v) for v in constraint.reject_vars]
+        sup_var = self._get_or_create_engine_var(constraint.support_var)
+        prop = CoverSizeSRPropagator(take_vars, reject_vars, sup_var, constraint.data)
+        self._prop_queue.add_propagator(prop)
+
+    def _post_split_possible(self, constraint: SplitPossible) -> None:
+        """Post CstSplitPossible propagator."""
+        decision = self._get_or_create_engine_var(constraint.decision)
+        count_pos = self._get_or_create_engine_var(constraint.count_pos)
+        count_neg = self._get_or_create_engine_var(constraint.count_neg)
+        count_sum = self._get_or_create_engine_var(constraint.count_sum)
+        prop = CstSplitPossiblePropagator(decision, count_pos, count_neg, count_sum,
+                                          constraint.threshold)
+        self._prop_queue.add_propagator(prop)
+
+    def _post_split_useful(self, constraint: SplitUseful) -> None:
+        """Post CstSplitUseful propagator."""
+        decision = self._get_or_create_engine_var(constraint.decision)
+        mini_sum = self._get_or_create_engine_var(constraint.mini_sum)
+        count_pos = self._get_or_create_engine_var(constraint.count_pos)
+        count_neg = self._get_or_create_engine_var(constraint.count_neg)
+        prop = CstSplitUsefulPropagator(decision, mini_sum, count_pos, count_neg,
+                                        constraint.error_upper_bound)
+        self._prop_queue.add_propagator(prop)
+
+    def _post_dummy_node(self, constraint: DummyNode) -> None:
+        """Post CstDummy propagator."""
+        dp = self._get_or_create_engine_var(constraint.decision_parent)
+        dcl = self._get_or_create_engine_var(constraint.decision_child_left)
+        dcr = self._get_or_create_engine_var(constraint.decision_child_right)
+        scl = self._get_or_create_engine_var(constraint.sum_child_left)
+        scr = self._get_or_create_engine_var(constraint.sum_child_right)
+        prop = CstDummyPropagator(dp, dcl, dcr, scl, scr)
+        self._prop_queue.add_propagator(prop)
+
+    def _post_dummy_end_node(self, constraint: DummyEndNode) -> None:
+        """Post CstDummyEnd propagator."""
+        dp = self._get_or_create_engine_var(constraint.decision_parent)
+        scl = self._get_or_create_engine_var(constraint.sum_child_left)
+        scr = self._get_or_create_engine_var(constraint.sum_child_right)
+        prop = CstDummyEndPropagator(dp, scl, scr)
         self._prop_queue.add_propagator(prop)
 
     def _post_comparison(self, comp: Comparison) -> None:
